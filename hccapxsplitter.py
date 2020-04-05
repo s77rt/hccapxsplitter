@@ -5,7 +5,7 @@ __author__ = "Abdelhafidh Belalia (s77rt)"
 __license__ = "MIT"
 __maintainer__ = "Abdelhafidh Belalia (s77rt)"
 __email__ = "admin@abdelhafidh.com"
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __github__ = "https://github.com/s77rt/hccapxsplitter/"
 
 import os
@@ -18,6 +18,7 @@ from itertools import groupby
 
 ### Constants ###
 HCCAPX_SIGNATURE = b'HCPX'
+HCCAPX_SIZE = 393
 ###
 
 ### H-Functions ###
@@ -54,13 +55,16 @@ DB = Database()
 ###
 
 ######################### CORE #########################
+HS_TOTAL = 0
+HS_AUTH = 0
 
 def read_file(file):
 	if file.lower().endswith('.gz'):
 		return gzip.open(file, 'rb')
 	return open(file, 'rb')
 
-def read_hccapx(hccapx_file, hccapx_size=393):
+def read_hccapx(hccapx_file, auth_only=True):
+	global HS_TOTAL, HS_AUTH
 	def extract_bssid(raw_data):
 		bssid = raw_data[59:65].hex()
 		bssid = '-'.join(bssid[i:i+2] for i in range(0,12,2))
@@ -70,20 +74,32 @@ def read_hccapx(hccapx_file, hccapx_size=393):
 		essid = raw_data[10:10+raw_data[9]]
 		essid = str(essid.decode(encoding='utf-8', errors='ignore').rstrip('\x00'))
 		return essid
+	def extract_message_pair(raw_data):
+		message_pair = raw_data[8]
+		return message_pair
 	while True: 
-		hccapx = hccapx_file.read(hccapx_size) 
+		hccapx = hccapx_file.read(HCCAPX_SIZE) 
 		if hccapx and hccapx[0:4] == HCCAPX_SIGNATURE:
+			HS_TOTAL += 1
+			message_pair = extract_message_pair(hccapx)
+			if (message_pair & 0b00000001) or (message_pair & 0b00000010) or (message_pair & 0b00000100):
+				HS_AUTH += 1
+			elif auth_only:
+				continue
 			DB.hccapx_add(extract_bssid(hccapx), extract_essid(hccapx), hccapx)
 		else:
-			return
+			break
 
 ######################### MAIN #########################
 
 def main():
 	if os.path.isfile(args.input):
 		hccapx_file =  read_file(args.input)
-		read_hccapx(hccapx_file)
+		read_hccapx(hccapx_file, args.auth)
 		DB.hccapx_groupby(args.group_by)
+
+		xprint("Handshakes: {} ({} authenticated)".format(HS_TOTAL, HS_AUTH))
+
 		if len(DB.hccapxs):
 			written = 0
 			xprint("\nOutput hccapx files:")
@@ -113,6 +129,7 @@ if __name__ == '__main__':
 	optional = parser.add_argument_group('optional arguments')
 	required.add_argument("--input", "-i", help="Input hccapx file", metavar="capture.hccapx", required=True)
 	optional.add_argument("--output", "-o", help="Output file", metavar="capture.hccapx")
+	optional.add_argument("--auth", help="Export only authenticated handshakes", action="store_true")
 	optional.add_argument("--group-by", "-g", choices=['bssid', 'essid', 'handshake'], default='bssid')
 	optional.add_argument("--quiet", "-q", help="Enable quiet mode (print only output files)", action="store_true")
 	optional.add_argument("--version", "-v", action='version', version=__version__)
